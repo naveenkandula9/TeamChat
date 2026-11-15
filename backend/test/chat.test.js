@@ -1,0 +1,81 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import mongoose from 'mongoose';
+import { io as connectClient } from 'socket.io-client';
+import { createChatServer } from '../src/server.js';
+import { Conversation, Message, Session, User, prepareDatabase } from '../src/models.js';
+import { NAMES } from '../src/messageRules.js';
+
+test('accounts, private rooms, presence, persistence and repeated likes', { skip: !process.env.TEST_MONGODB_URI && 'Set TEST_MONGODB_URI to a dedicated test database' }, async (t) => {
+  const origin = 'http://localhost:5173';
+  const secret = 'test-only-secret-with-at-least-32-characters';
+  const marker = randomUUID();
+  const emails = ['alice', 'bob', 'charlie'].map((name) => `${name}-${marker}@example.test`);
+  const clients = [];
+  await mongoose.connect(process.env.TEST_MONGODB_URI, { serverSelectionTimeoutMS: 10000 });
+  await prepareDatabase();
+  const server = createChatServer({ clientOrigin: origin, jwtSecret: secret });
+  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    clients.forEach((client) => client.disconnect());
+    await new Promise((resolve) => server.io.close(resolve));
+    const users = await User.find({ email: { $in: emails } }).select('_id').lean();
+    const ids = users.map((user) => user._id);
+    await Promise.all([Message.deleteMany({ sender: { $in: ids } }), Session.deleteMany({ user: { $in: ids } }), Conversation.deleteMany({ type: 'direct', participants: { $in: ids } })]);
+    await User.deleteMany({ _id: { $in: ids } });
+    await mongoose.disconnect();
+  });
+  const url = `http://127.0.0.1:${server.httpServer.address().port}`;
+  async function http(path, { method = 'GET', body, cookie } = {}) {
+    const response = await fetch(url + path, { method, headers: { Origin: origin, ...(cookie ? { Cookie: cookie } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: response.status, data: await response.json(), cookie: response.headers.get('set-cookie')?.split(';')[0] };
+  }
+  const credentials = emails.map((email, i) => ({ name: ['Alice', 'Bob', 'Charlie'][i], location: 'Test City', age: 25, email, password: 'testpassword123', confirmPassword: 'testpassword123' }));
+  assert.equal((await http('/api/users')).status, 401);
+  for (const body of credentials) assert.equal((await http('/api/auth/register', { method: 'POST', body })).status, 201);
+  assert.equal((await http('/api/auth/register', { method: 'POST', body: { ...credentials[0], email: emails[0].toUpperCase() } })).status, 409);
+  const stored = await User.findOne({ email: emails[0] }).select('+passwordHash');
+  assert.notEqual(stored.passwordHash, credentials[0].password);
+  assert.match(stored.passwordHash, /^\$2[aby]\$/);
+  const logins = [];
+  for (const body of credentials) logins.push(await http('/api/auth/login', { method: 'POST', body: { email: body.email, password: body.password } }));
+  assert.ok(logins.every((login) => login.status === 200 && login.cookie));
+  const connect = async (cookie) => { const socket = connectClient(url, { autoConnect: false, transports: ['websocket'], extraHeaders: { Cookie: cookie, Origin: origin } }); clients.push(socket); const connected = once(socket, 'connect'); socket.connect(); await connected; return socket; };
+  const [alice, aliceTab, bob, charlie] = await Promise.all([connect(logins[0].cookie), connect(logins[0].cookie), connect(logins[1].cookie), connect(logins[2].cookie)]);
+  const emit = (socket, event, data) => new Promise((resolve, reject) => socket.timeout(4000).emit(event, data, (error, result) => error ? reject(error) : resolve(result)));
+  const directory = await http('/api/users', { cookie: logins[0].cookie });
+  assert.equal(directory.data.onlineUserIds.filter((id) => id === logins[0].data.user.id).length, 1);
+  aliceTab.disconnect();
+  assert.ok((await http('/api/users', { cookie: logins[0].cookie })).data.onlineUserIds.includes(logins[0].data.user.id));
+  const team = directory.data.conversations.find((item) => item.type === 'team');
+  await emit(alice, 'conversation:join', { conversationId: team.id });
+  await emit(bob, 'conversation:join', { conversationId: team.id });
+  const incoming = once(bob, 'message:created');
+  const sent = await emit(alice, 'message:create', { conversationId: team.id, text: 'Team hello' });
+  assert.equal(sent.ok, true);
+  assert.ok(NAMES.includes(sent.data.assignmentLabel));
+  assert.equal(sent.data.sender.id, logins[0].data.user.id);
+  assert.equal((await incoming)[0].id, sent.data.id);
+  for (let i = 1; i <= 3; i++) {
+    const update = once(alice, 'message:updated');
+    assert.equal((await emit(bob, 'message:like', { conversationId: team.id, messageId: sent.data.id })).data.likes, i);
+    assert.equal((await update)[0].likes, i);
+  }
+  const history = await emit(alice, 'conversation:join', { conversationId: team.id });
+  assert.equal(history.data.find((message) => message.id === sent.data.id).likes, 3);
+  const direct = await http('/api/conversations/direct', { method: 'POST', body: { userId: logins[1].data.user.id }, cookie: logins[0].cookie });
+  const duplicate = await http('/api/conversations/direct', { method: 'POST', body: { userId: logins[0].data.user.id }, cookie: logins[1].cookie });
+  assert.equal(direct.data.id, duplicate.data.id);
+  assert.equal((await emit(charlie, 'conversation:join', { conversationId: direct.data.id })).ok, false);
+  assert.equal((await emit(charlie, 'message:create', { conversationId: direct.data.id, text: 'Intrusion' })).ok, false);
+  await emit(alice, 'conversation:join', { conversationId: direct.data.id });
+  await emit(bob, 'conversation:join', { conversationId: direct.data.id });
+  const directIncoming = once(bob, 'message:created');
+  assert.equal((await emit(alice, 'message:create', { conversationId: direct.data.id, text: 'Private hello' })).ok, true);
+  assert.equal((await directIncoming)[0].text, 'Private hello');
+  assert.equal((await http('/api/auth/logout', { method: 'POST', cookie: logins[0].cookie })).status, 200);
+  assert.equal((await http('/api/auth/me', { cookie: logins[0].cookie })).status, 401);
+  assert.equal((await http('/api/auth/login', { method: 'POST', body: { email: emails[0], password: credentials[0].password } })).status, 200);
+});

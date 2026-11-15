@@ -1,0 +1,286 @@
+Act as a senior full-stack developer, software architect, and UI/UX designer. Review and upgrade my **existing Exactspace chat application** into a professional, WhatsApp-inspired messaging application.
+
+First inspect the current project, understand how its frontend, Express backend, MongoDB, and Socket.IO are implemented, and identify what can be reused. Then create a short implementation plan and carry out the changes. Preserve the existing working functionality and the company’s mandatory assignment requirements.
+
+Do not start a completely unrelated project or remove working features without a good reason.
+
+## Project objective
+
+Build a responsive, full-stack chat application with:
+
+- User registration and login.
+- JWT-based authentication.
+- User profiles stored in MongoDB Atlas.
+- A WhatsApp-inspired sidebar with registered users and conversations.
+- A shared team chat and one-to-one chats.
+- Real-time messages and like-count updates using Socket.IO.
+- Accurate online and offline indicators.
+- A comprehensive, searchable emoji picker.
+- A polished, responsive, professional user interface.
+
+## Existing technology stack
+
+Use the project’s existing stack where appropriate:
+
+- React and Vite.
+- JavaScript.
+- Node.js and Express.js.
+- MongoDB Atlas with Mongoose.
+- Socket.IO.
+- JWT for authentication.
+
+Use environment variables for secrets and configuration. Reuse the existing MongoDB environment variable rather than hardcoding credentials. Never print or expose the database connection string, JWT secret, user passwords, or token values in the frontend, logs, repository, screenshots, or README.
+
+## 1. Preserve the company’s assignment requirements
+
+The company requires:
+
+1. A single-page React chat application with an input box and Send button.
+2. Sent messages must appear in the chat thread.
+3. Each new message must be randomly assigned one username from this exact list:
+
+   ```js
+   ["Alan", "Bob", "Carol", "Dean", "Elin"]
+   ```
+
+4. Every message must have a Like button at its right end and display its like count.
+5. Each click must increase the count, including repeated clicks.
+6. Each message must have an independent like count.
+
+### Reconcile random names with registered users
+
+Because registered users have real account names, do not pretend that a randomly assigned name is the actual sender.
+
+Store and display both:
+
+- The **registered sender’s name**.
+- A separate, clearly labelled **“Assignment label”** containing the randomly assigned name.
+
+For example:
+
+```text
+Naveen · Assignment label: Alan
+Hello everyone! 👋
+```
+
+Randomly generate the assignment label once when the message is created and save it with the message. Do not change the label when the page refreshes.
+
+Explain this design choice briefly in the README so the reviewer can understand how the app satisfies the original brief while supporting registered users.
+
+## 2. Registration and user profiles
+
+Create a professional **Sign Up** page with these fields:
+
+- Full name.
+- Where the user is from: city or location as a simple text field.
+- Age.
+- Email address.
+- Password.
+- Confirm password.
+
+Requirements:
+
+- Validate all fields on the frontend and backend.
+- Require a valid email address.
+- Require age to be a reasonable whole number.
+- Require matching passwords and a suitable minimum password length.
+- Store email addresses consistently so duplicate accounts using different capitalization are prevented.
+- Show clear, helpful validation and server error messages.
+- Store passwords securely using bcrypt or an equivalent established password-hashing library. Never store plain-text passwords.
+- Do not include password hashes or unnecessary private account information in user-list API responses.
+- After successful registration, guide the user into the application through a clear sign-in flow.
+
+Keep profile information appropriate for this assignment. Do not show a user’s email or age to everyone in the sidebar.
+
+## 3. Login and JWT authentication
+
+Create a polished **Login** page with:
+
+- Email address.
+- Password.
+- Login button.
+- Link to the Sign Up page.
+- Clear errors for invalid credentials and server failures.
+
+Implement JWT-based authentication:
+
+- Protect authenticated API routes.
+- Authenticate Socket.IO connections and authorize each socket to join only conversations it is allowed to access.
+- Provide a **Log Out** button that ends the authenticated session.
+- Use a secure token-storage approach suitable for the deployment architecture. Prefer an HTTP-only cookie with appropriate `Secure` and `SameSite` settings, and configure credentials and CORS correctly for local development and deployment.
+- Use an environment variable for the JWT secret.
+- Protect against common input and authentication errors; do not expose secrets or detailed internal errors to clients.
+- Do not create nonfunctional “Forgot password” or social-login buttons. If password reset or email verification is not implemented, say so in the README rather than implying it exists.
+
+## 4. WhatsApp-inspired chat layout
+
+Redesign the chat interface so it feels like a professional messaging application. Use WhatsApp as inspiration for the layout, but create an original visual style.
+
+### Desktop layout
+
+Use a two-panel interface:
+
+**Left sidebar**
+
+- App name or logo.
+- Logged-in user’s avatar or initials and name.
+- Search field for registered users or conversations.
+- A **Team Chat** entry.
+- A list of other registered users for starting or opening direct conversations.
+- Online/offline indicator beside each user.
+- The latest message preview where available.
+- Log Out control.
+
+**Main chat panel**
+
+- Chat header with the selected user or team chat name.
+- Online/offline status for a selected user.
+- Message thread.
+- Message composer with emoji, mention, text input, and Send controls.
+- Like button and count at the right end of every message, as required by the assignment.
+
+Differentiate messages sent by the current account from those sent by others. Keep actual sender names and assignment labels clear and readable.
+
+### Responsive behavior
+
+- On desktop and tablet, use the sidebar and chat panel where there is enough space.
+- On mobile, show the conversation list first and open the selected chat as a full-width view with a back button.
+- Ensure the composer remains accessible, text does not overflow, and buttons are easy to tap.
+- Provide accessible labels, visible keyboard focus, good contrast, and keyboard support.
+
+## 5. Shared team chat and direct messages
+
+Implement:
+
+### Team Chat
+
+- A shared chat available to all registered users.
+- New messages appear in real time to connected participants.
+- Show the actual sender name and the separate random assignment label.
+
+### One-to-one chat
+
+- A user can select another registered user from the sidebar.
+- The two users can exchange messages in a private conversation.
+- Ensure that a user cannot view or join another user’s direct conversation by changing an ID in an API request or Socket.IO event.
+- Avoid creating duplicate direct conversations for the same pair of users.
+
+For both types of chat:
+
+- Save messages in MongoDB.
+- Load previous messages when the conversation is opened or the page is refreshed.
+- Broadcast saved messages and like updates to the correct conversation.
+- Prevent duplicate messages from appearing due to the sender receiving a broadcast.
+- Avoid showing a message as successfully sent when persistence or server communication failed.
+
+## 6. Registered users and online/offline status
+
+Show in the app header or sidebar:
+
+- **Total registered users.**
+- **Users online.**
+- **Users offline.**
+
+Make the counting rules clear:
+
+- Total registered means the number of accounts in the database.
+- A user is online if they have at least one active authenticated Socket.IO connection.
+- A user is offline if they are registered but have no active authenticated connection.
+- Count users, not browser tabs. If a user has two tabs open, count them once.
+- If one tab closes but another is still connected, the user should remain online.
+- Update the sidebar indicators and counts in real time when users connect, disconnect, or reconnect.
+
+Do not display fabricated counts. Document any limitations of the presence implementation, especially if the backend is deployed with multiple server instances.
+
+## 7. Searchable emoji picker
+
+Replace the current limited emoji selection with a comprehensive, accessible emoji picker using a suitable maintained library.
+
+The emoji picker should provide:
+
+- A **search bar** to find emojis by name.
+- Categories and a large selection of emojis.
+- Smooth scrolling.
+- Responsive behavior on mobile and desktop.
+- Keyboard accessibility where supported by the library.
+- Insertion at the current cursor position in the message input.
+
+Provide a polished experience similar to modern chat applications. Do not claim the picker is Google’s exact emoji picker unless that is actually what is used.
+
+## 8. Mentions
+
+Preserve the existing optional mentions feature:
+
+- Typing `@` or clicking the mention control should display the original list:
+
+  ```js
+  ["Alan", "Bob", "Carol", "Dean", "Elin"]
+  ```
+
+- Allow selection from the list and insert the name into the message.
+- Highlight valid mentions safely in the displayed message.
+- Make it clear that these names correspond to the assignment’s example user list. Do not suggest that they are registered accounts unless they really are.
+
+## 9. Message composer and interactions
+
+- Send a message by clicking **Send** or pressing **Enter**.
+- Allow **Shift + Enter** for a new line.
+- Prevent blank or whitespace-only messages.
+- Set a reasonable maximum message length and enforce it on the client and server.
+- Display timestamps in a readable format.
+- Auto-scroll for new messages only when the user is already near the bottom.
+- Show useful loading, empty, disconnected, and error states.
+- Reconnect gracefully when the connection returns.
+- Do not add features such as read receipts, typing indicators, or delivery indicators unless they are genuinely implemented.
+
+## 10. MongoDB data structure
+
+Design and implement suitable Mongoose models for:
+
+- **User:** name, location, age, email, password hash, and timestamps.
+- **Conversation:** type and participants where applicable.
+- **Message:** conversation ID, actual sender ID, random assignment label, text, timestamp, and like count.
+
+Add appropriate validation, indexes, and access checks. Use atomic increments for like counts so repeated or concurrent clicks are handled correctly.
+
+If the existing database already contains messages without a registered sender or conversation, do not silently delete them. Provide a safe migration or clearly explain how the application handles older data.
+
+## 11. Testing and verification
+
+Test and report the results honestly. At minimum, verify:
+
+1. A user can register, log in, log out, and log back in.
+2. Passwords are hashed in the database.
+3. Duplicate email registration is rejected.
+4. Protected pages and API routes reject unauthenticated requests.
+5. Two accounts can send messages in Team Chat.
+6. Two accounts can exchange direct messages.
+7. A third account cannot read or join their private conversation.
+8. Each message has a valid random assignment label from the required list.
+9. Repeated likes increment the correct message’s count.
+10. Messages and likes remain after refresh.
+11. Two browser sessions receive messages and likes in real time.
+12. Online counts handle multiple tabs for the same account correctly.
+13. Emoji search, emoji insertion, and mentions work.
+14. The interface works on mobile and desktop.
+15. Secrets are not included in tracked files.
+
+Use automated tests where practical, and describe any manual checks. Do not claim MongoDB or real-time functionality has been verified if the environment does not permit a real connection.
+
+## 12. README and handover
+
+Update the README with:
+
+- Project overview and screenshots if available.
+- Full feature list.
+- Architecture and technology stack.
+- How the real sender name and random assignment label work.
+- How to configure MongoDB Atlas, allowed IP addresses, JWT secret, and frontend/backend environment variables.
+- Local installation and run commands.
+- How to create two test accounts and test real-time chat.
+- How to run automated tests.
+- Deployment notes for the frontend, backend, Socket.IO, cookies, and CORS.
+- A clear list of known limitations.
+- A simple interview explanation of authentication, MongoDB, Socket.IO, online presence, and message likes.
+
+Before making changes, give me a short plan. Then implement the plan in the existing project, run the available checks, fix issues you find, and report what was completed and what still needs configuration.
